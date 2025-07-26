@@ -1,0 +1,9 @@
+version: "3.9"
+services:
+  asr:
+    build: .
+    ports:
+      - "8000:8000"
+    restart: always
+    volumes:
+      - ./models:/app/models  # nếu bạn lưu model trong thư mục models/
