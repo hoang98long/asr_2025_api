@@ -1,5 +1,4 @@
 from fastapi import FastAPI, UploadFile, File
-from pydantic import BaseModel
 import torch
 import torchaudio
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
