@@ -67,7 +67,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
             predicted_ids = model.generate(
                 inputs["input_features"],
                 num_beams=5,
-                max_new_tokens=512,
+                max_new_tokens=440,
                 do_sample=False
             )
             t1 = time.time()
