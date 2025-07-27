@@ -1,66 +1,91 @@
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import torch
 import torchaudio
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
-import io
 from datetime import datetime
+import os
+import time
+import uuid
 
-app = FastAPI(title="ASR API - Whisper", description="Nhận dạng giọng nói bằng mô hình Whisper", version="1.0")
+app = FastAPI()
 
-# ==== Load model 1 lần khi khởi động ====
-model_path = "models/phowhisper-large"
-sampling_rate_target = 16000
-chunk_length_sec = 30
+# ==== Cấu hình ====
+MODEL_PATH = "models/phowhisper-large"
+CHUNK_LENGTH_SEC = 30
+TARGET_SR = 16000
 
-processor = WhisperProcessor.from_pretrained(model_path)
-model = WhisperForConditionalGeneration.from_pretrained(model_path)
+# ==== Load model ====
+processor = WhisperProcessor.from_pretrained(MODEL_PATH)
+model = WhisperForConditionalGeneration.from_pretrained(MODEL_PATH)
 model.eval()
 
+# ==== API upload file ====
+@app.post("/asr")
+async def transcribe_audio(file: UploadFile = File(...)):
+    # Lưu file tạm vào RAM
+    temp_filename = f"temp_{uuid.uuid4()}.mp3"
+    with open(temp_filename, "wb") as f:
+        f.write(await file.read())
 
-@app.post("/transcribe/")
-async def transcribe(file: UploadFile = File(...)):
-    try:
-        # Đọc file âm thanh
-        audio_bytes = await file.read()
-        waveform, sr = torchaudio.load(io.BytesIO(audio_bytes))
+    # Load audio
+    waveform, sr = torchaudio.load(temp_filename)
 
-        # Mono
-        if waveform.shape[0] > 1:
-            waveform = torch.mean(waveform, dim=0, keepdim=True)
+    # Xoá file tạm
+    os.remove(temp_filename)
 
-        # Resample nếu cần
-        if sr != sampling_rate_target:
-            resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=sampling_rate_target)
-            waveform = resampler(waveform)
+    # Convert stereo → mono
+    if waveform.shape[0] > 1:
+        waveform = torch.mean(waveform, dim=0, keepdim=True)
 
-        # Chia chunk
-        num_samples = waveform.shape[1]
-        samples_per_chunk = chunk_length_sec * sampling_rate_target
-        chunks = [
-            waveform[:, i:min(i + samples_per_chunk, num_samples)]
-            for i in range(0, num_samples, samples_per_chunk)
-        ]
+    # Resample nếu cần
+    if sr != TARGET_SR:
+        waveform = torchaudio.transforms.Resample(orig_freq=sr, new_freq=TARGET_SR)(waveform)
 
-        # Nhận dạng từng chunk
-        full_transcription = ""
-        for idx, chunk in enumerate(chunks):
-            inputs = processor(chunk.squeeze().numpy(), sampling_rate=16000, return_tensors="pt")
-            with torch.no_grad():
-                predicted_ids = model.generate(inputs["input_features"])
-            text = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
-            full_transcription += f"[Đoạn {idx+1}]\n{text}\n\n"
+    # Chia đoạn
+    samples_per_chunk = CHUNK_LENGTH_SEC * TARGET_SR
+    num_samples = waveform.shape[1]
+    chunks = [
+        waveform[:, start:min(start + samples_per_chunk, num_samples)]
+        for start in range(0, num_samples, samples_per_chunk)
+    ]
 
-        # Tuỳ chọn: Lưu file ra nếu muốn
-        # with open("recognized_output_asr.txt", "w", encoding="utf-8") as f:
-        #     f.write(full_transcription)
+    # Nhận dạng từng chunk
+    full_transcription = ""
+    chunk_timings = []
 
-        return JSONResponse({
-            "filename": file.filename,
-            "timestamp": datetime.now().isoformat(),
-            "segments": len(chunks),
-            "transcription": full_transcription.strip()
-        })
+    for idx, chunk in enumerate(chunks):
+        inputs = processor(
+            chunk.squeeze().numpy(),
+            sampling_rate=TARGET_SR,
+            return_tensors="pt",
+            language="vi",
+            task="transcribe"
+        )
 
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        with torch.no_grad():
+            t0 = time.time()
+            predicted_ids = model.generate(
+                inputs["input_features"],
+                num_beams=5,
+                max_new_tokens=512,
+                do_sample=False
+            )
+            t1 = time.time()
+
+        text = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+        full_transcription += f"[Đoạn {idx+1}]\n{text}\n\n"
+        chunk_timings.append({"chunk": idx + 1, "duration_sec": round(t1 - t0, 2)})
+
+    return {
+        "filename": file.filename,
+        "timestamp": datetime.now().isoformat(),
+        "num_chunks": len(chunks),
+        "chunk_length_sec": CHUNK_LENGTH_SEC,
+        "timings": chunk_timings,
+        "transcription": full_transcription.strip()
+    }
+
+@app.get("/")
+def root():
+    return {"message": "PhoWhisper ASR API is running."}
