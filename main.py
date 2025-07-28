@@ -73,7 +73,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
             t1 = time.time()
 
         text = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
-        full_transcription += f"[Đoạn {idx+1}]\n{text}\n\n"
+        full_transcription += f"{text}"
+        full_transcription += " "
         chunk_timings.append({"chunk": idx + 1, "duration_sec": round(t1 - t0, 2)})
 
     return {
