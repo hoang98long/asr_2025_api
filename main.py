@@ -9,47 +9,31 @@ import uuid
 
 app = FastAPI()
 
-# ==== Cấu hình ====
 MODEL_PATH = "models/phowhisper-large"
 CHUNK_LENGTH_SEC = 30
 TARGET_SR = 16000
 
-# ==== Load model ====
 processor = WhisperProcessor.from_pretrained(MODEL_PATH)
 model = WhisperForConditionalGeneration.from_pretrained(MODEL_PATH)
 model.eval()
 
-# ==== API upload file ====
 @app.post("/asr")
 async def transcribe_audio(file: UploadFile = File(...)):
-    # Lưu file tạm vào RAM
     temp_filename = f"temp_{uuid.uuid4()}.mp3"
     with open(temp_filename, "wb") as f:
         f.write(await file.read())
-
-    # Load audio
     waveform, sr = torchaudio.load(temp_filename)
-
-    # Xoá file tạm
     os.remove(temp_filename)
-
-    # Convert stereo → mono
     if waveform.shape[0] > 1:
         waveform = torch.mean(waveform, dim=0, keepdim=True)
-
-    # Resample nếu cần
     if sr != TARGET_SR:
         waveform = torchaudio.transforms.Resample(orig_freq=sr, new_freq=TARGET_SR)(waveform)
-
-    # Chia đoạn
     samples_per_chunk = CHUNK_LENGTH_SEC * TARGET_SR
     num_samples = waveform.shape[1]
     chunks = [
         waveform[:, start:min(start + samples_per_chunk, num_samples)]
         for start in range(0, num_samples, samples_per_chunk)
     ]
-
-    # Nhận dạng từng chunk
     full_transcription = ""
     chunk_timings = []
 
