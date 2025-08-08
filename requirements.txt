@@ -7,3 +7,4 @@ scikit_learn==1.6.1
 soundfile==0.13.1
 fastapi
 uvicorn
+python-multipart
