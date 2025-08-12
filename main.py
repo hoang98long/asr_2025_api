@@ -1,11 +1,12 @@
 from fastapi import FastAPI, UploadFile, File
 import torch
-import torchaudio
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from datetime import datetime
 import os
 import time
 import uuid
+from pydub import AudioSegment
+import numpy as np
 
 app = FastAPI()
 
@@ -19,22 +20,27 @@ processor = WhisperProcessor.from_pretrained(MODEL_PATH)
 model = WhisperForConditionalGeneration.from_pretrained(MODEL_PATH).to(device)
 model.eval()
 
+
+def load_audio_as_tensor(file_path, target_sr=16000):
+    """Load audio (mp3, wav...) and resample to target_sr, return tensor"""
+    audio = AudioSegment.from_file(file_path)
+    audio = audio.set_frame_rate(target_sr).set_channels(1)
+    samples = np.array(audio.get_array_of_samples()).astype(np.float32) / 32768.0
+    waveform = torch.tensor(samples).unsqueeze(0)
+    return waveform
+
+
 @app.post("/asr")
 async def transcribe_audio(file: UploadFile = File(...)):
-    temp_filename = f"temp_{uuid.uuid4()}.mp3"
-    try:
-        with open(temp_filename, "wb") as f:
-            f.write(await file.read())
-        waveform, sr = torchaudio.load(temp_filename)
-    finally:
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
+    # Lưu file tạm
+    ext = os.path.splitext(file.filename)[-1].lower()
+    temp_filename = f"temp_{uuid.uuid4()}{ext}"
+    with open(temp_filename, "wb") as f:
+        f.write(await file.read())
 
-    if waveform.shape[0] > 1:
-        waveform = torch.mean(waveform, dim=0, keepdim=True)
-
-    if sr != TARGET_SR:
-        waveform = torchaudio.transforms.Resample(orig_freq=sr, new_freq=TARGET_SR)(waveform)
+    # Load waveform từ file bất kỳ định dạng
+    waveform = load_audio_as_tensor(temp_filename, target_sr=TARGET_SR)
+    os.remove(temp_filename)
 
     if waveform.shape[1] < 1000:
         return {
@@ -61,7 +67,6 @@ async def transcribe_audio(file: UploadFile = File(...)):
             language="vi",
             task="transcribe"
         )
-
         inputs["input_features"] = inputs["input_features"].to(device)
 
         with torch.no_grad():
@@ -69,7 +74,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
             predicted_ids = model.generate(
                 inputs["input_features"],
                 num_beams=5,
-                max_new_tokens=440,  # Chọn sao cho không vượt giới hạn 448
+                max_new_tokens=440,  # Đảm bảo không vượt 448 token
                 do_sample=False,
                 suppress_tokens=[]
             )
@@ -87,6 +92,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         "timings": chunk_timings,
         "transcription": full_transcription.strip()
     }
+
 
 @app.get("/")
 def root():
