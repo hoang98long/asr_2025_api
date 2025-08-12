@@ -8,3 +8,4 @@ soundfile==0.13.1
 fastapi
 uvicorn
 python-multipart
+pydub
