@@ -30,7 +30,7 @@ def load_audio_as_tensor(file_path, target_sr=16000):
     return waveform
 
 
-@app.post("/asr")
+@app.post("/")
 async def transcribe_audio(file: UploadFile = File(...)):
     # Lưu file tạm
     ext = os.path.splitext(file.filename)[-1].lower()
@@ -94,6 +94,6 @@ async def transcribe_audio(file: UploadFile = File(...)):
     }
 
 
-@app.get("/")
+@app.get("/asr")
 def root():
     return {"message": "PhoWhisper ASR API is running."}
