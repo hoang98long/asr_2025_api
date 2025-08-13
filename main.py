@@ -8,7 +8,7 @@ import uuid
 from pydub import AudioSegment
 import numpy as np
 
-app = FastAPI(root_path="/asr")
+app = FastAPI()
 
 MODEL_PATH = "models/phowhisper-large"
 CHUNK_LENGTH_SEC = 30
